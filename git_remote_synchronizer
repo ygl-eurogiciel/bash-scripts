@@ -1,0 +1,140 @@
+#!/bin/bash
+#
+# Copyright 2014, Eurogiciel.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; version 2 of the License.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Library General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+# native
+#
+# Last Modification: 28 February 2014
+
+###
+### Variables ###
+###
+
+# Default configuration file
+CONFIG_FILE="git_remote_synchronizer.conf"
+PAUSE_FILE=pause_git_sync
+
+###
+### Functions ###
+###
+
+# Description:
+#  Check if git remotes references are in sync.
+# Args :
+#  $1 = local git repo directory
+#  $2 = upstream remote name
+#  $3 = forked remote name
+#  $4 = refs/heads/master
+# Return code:
+#   0 = repo are in sync
+function git_ls_remote {
+  [ ! -d "$1" ] || {
+    cd "$1"
+    git ls-remote "$2" -h "refs/heads/$4" > "/tmp/$$_upstream.log"
+    git ls-remote "$3" -h "refs/heads/$4" > "/tmp/$$_forked.log"
+    cd ${OLDPWD}
+
+    diff "/tmp/$$_upstream.log" "/tmp/$$_forked.log" > /dev/null
+    RES=$?
+
+    rm "/tmp/$$_upstream.log" "/tmp/$$_forked.log"
+
+    return ${RES}
+  }
+}
+
+###
+### Script entry point ###
+###
+
+# Uncomment for bash debug mode
+# set -x
+
+if [ ! $# -eq 0 ]; then
+  if [ "$1" == "-h" ]; then
+    echo "Usage:"
+    echo "  $0 [<config_file.conf>]"
+    echo "     default config file is : ${CONFIG_FILE}"
+    exit 0
+  elif [ -f "$1" ]; then
+    CONFIG_FILE="$1"
+    echo "User asked for config: ${CONFIG_FILE}"
+  else
+    echo "Warning: Config file $1 not found. Will try using default ${CONFIG_FILE}"
+  fi
+fi
+
+[ -f ${CONFIG_FILE} ] || {
+  echo "Error: No config file."
+  exit 1
+}
+source ${CONFIG_FILE}
+
+# Logfile bash functions:
+LOGFILE=${PWD}/.branch_follower.log
+source logs_funcs.bash
+
+# Initial checks
+which git > /dev/null || { echo "Git is not installed. Please install it before using this script." ; exit 1; }
+
+stop=0
+if [ ${#REPO_DIRLIST[@]} != ${#REPO_FETCH_REMOTE_NAME[@]} ]; then stop=1; fi
+if [ ${#REPO_DIRLIST[@]} != ${#REPO_PUSH_REMOTE_NAME[@]} ]; then stop=1; fi
+if [ ${#REPO_DIRLIST[@]} != ${#REPO_BRANCH_REMOTE_NAME[@]} ]; then stop=1; fi
+
+if [ $stop == 1 ]; then
+  echo "Error: Invalid configuration. Please check the variables inside the script."
+  exit 1
+fi
+
+#drop_logs
+logs_addheader
+
+if [ -f ${PAUSE_FILE} ]; then
+  process_and_logs echo "Info: user asked to pause the sync temporary. Please remove ${PAUSE_FILE} file to reactivate the sync."
+  logs_addfooter
+  exit 0
+else
+  process_and_logs echo "Info: service activated. You can temporary pause the sync creating an empty file named ${PAUSE_FILE}"
+fi
+
+for (( i=0 ; $i < ${#REPO_DIRLIST[@]} ; i++ ))
+do
+  process_and_logs echo "--------------"
+  process_and_logs echo "Checking git repo: ${REPO_DIRLIST[$i]}"
+  if [ ! -d ${REPO_DIRLIST[$i]} ]; then
+    process_and_logs echo "Warning: repo directory not found. Ignoring."
+  else
+    git_ls_remote ${REPO_DIRLIST[$i]} ${REPO_FETCH_REMOTE_NAME[$i]} ${REPO_PUSH_REMOTE_NAME[$i]} ${REPO_BRANCH_REMOTE_NAME[$i]}
+    if [ ! $? -eq 0 ]; then
+	    process_and_logs echo "  Remotes differs, will sync now..."
+
+      process_and_logs cd ${REPO_DIRLIST[$i]}
+      process_and_logs git fetch --all -p
+      process_and_logs git checkout ${REPO_BRANCH_REMOTE_NAME[$i]}
+      process_and_logs git reset --hard ${REPO_FETCH_REMOTE_NAME[$i]}/${REPO_BRANCH_REMOTE_NAME[$i]}
+      process_and_logs git push -f ${REPO_PUSH_REMOTE_NAME[$i]} HEAD:${REPO_BRANCH_REMOTE_NAME[$i]}
+      process_and_logs cd ${OLDPWD}
+    else
+      process_and_logs echo "  Both remotes in sync."
+    fi
+  fi
+done
+
+logs_addfooter
+
+exit 0
+#################################################################
+
