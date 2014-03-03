@@ -30,6 +30,10 @@ PAUSE_FILE=pause_git_sync
 ### Functions ###
 ###
 
+# Logfile bash functions:
+LOGFILE=${PWD}/.branch_follower.log
+source logs_funcs.bash
+
 # Description:
 #  Check if git remotes references are in sync.
 # Args :
@@ -62,6 +66,11 @@ function git_ls_remote {
 # Uncomment for bash debug mode
 # set -x
 
+# Initial checks
+which git > /dev/null || { echo "Git is not installed. Please install it before using this script." ; exit 1; }
+
+# Arguments checks
+bad_cfg_file=0
 if [ ! $# -eq 0 ]; then
   if [ "$1" == "-h" ]; then
     echo "Usage:"
@@ -72,23 +81,19 @@ if [ ! $# -eq 0 ]; then
     CONFIG_FILE="$1"
     echo "User asked for config: ${CONFIG_FILE}"
   else
+    bad_cfg_file=1
     echo "Warning: Config file $1 not found. Will try using default ${CONFIG_FILE}"
   fi
 fi
 
+# Check configuration file presence
 [ -f ${CONFIG_FILE} ] || {
   echo "Error: No config file."
   exit 1
 }
 source ${CONFIG_FILE}
 
-# Logfile bash functions:
-LOGFILE=${PWD}/.branch_follower.log
-source logs_funcs.bash
-
-# Initial checks
-which git > /dev/null || { echo "Git is not installed. Please install it before using this script." ; exit 1; }
-
+# Check configuration file consistency
 stop=0
 if [ ${#REPO_DIRLIST[@]} != ${#REPO_FETCH_REMOTE_NAME[@]} ]; then stop=1; fi
 if [ ${#REPO_DIRLIST[@]} != ${#REPO_PUSH_REMOTE_NAME[@]} ]; then stop=1; fi
@@ -102,6 +107,11 @@ fi
 #drop_logs
 logs_addheader
 
+if [ $bad_cfg_file == 1 ]; then
+  process_and_logs echo "Warning: User asked for config file $1, but cannot find it"
+fi
+process_and_logs echo "Info: Using config file ${CONFIG_FILE}"
+
 if [ -f ${PAUSE_FILE} ]; then
   process_and_logs echo "Info: user asked to pause the sync temporary. Please remove ${PAUSE_FILE} file to reactivate the sync."
   logs_addfooter
@@ -113,7 +123,7 @@ fi
 for (( i=0 ; $i < ${#REPO_DIRLIST[@]} ; i++ ))
 do
   process_and_logs echo "--------------"
-  process_and_logs echo "Checking git repo: ${REPO_DIRLIST[$i]}"
+  process_and_logs echo "Sync git repo: ${REPO_DIRLIST[$i]}"
   if [ ! -d ${REPO_DIRLIST[$i]} ]; then
     process_and_logs echo "Warning: repo directory not found. Ignoring."
   else
