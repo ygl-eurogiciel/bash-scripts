@@ -18,58 +18,44 @@
 #
 # Example to use these functions in a bash caller script:
 #
-# LOGFILE=your_log_filename.log
-# source logs_funcs.sh
+# EMAIL_FAKE_SEND=0     # 0: normal mode 1: avoid mail to be sent (debug mode)
+# source email_funcs.sh
 # 
 # Last Modification: 28 February 2014
 
 
 # Description:
-#  Remove existing log file.
+#  Send a mail with an attachment (optional)
 # Args :
-#  None
-function drop_logs {
-  [ ! -f ${LOGFILE} ] || rm ${LOGFILE}
-}
+#  $1: Email subject
+#  $2: Email content
+#  $3: Email address
+#  $4...n: (Optional) files to attach
+function email_send_file {
+  if [ $# -lt 3 ]; then
+    echo "${FUNCNAME}(): Not enough arguments"
+    return 1
+  fi
 
-# Description:
-#  Header in log file, date and time.
-# Args :
-#  None
-function logs_addheader {
-  echo "######## Session start at: `date` ########" | tee -a ${LOGFILE}
-}
+  subject=$1; shift
+  content=$1; shift
+  address=$1; shift
 
-# Description:
-#  Footer in log file
-# Args :
-#  None
-function logs_addfooter {
-  echo "######## Session finished at: `date` ########" | tee -a ${LOGFILE}
-}
-
-# Description:
-#  Launch a command line and catch stdio & stderr output in a log file.
-# Args :
-#  process_name arg1 arg2 ... argN
-function process_and_logs {
-  [ $# -eq 0 ] || {
-    retval=0
-
-    if [ "$1" != "echo" ]; then
-      echo "  $ "$* | tee -a ${LOGFILE}
-    fi
-
-    if [ "$1" == "cd" ]; then
-      $* 2>&1
-      retval=$?
+  attachlist=""
+  while [ $# -gt 0 ]; do
+    if [ ! -f $1 ]; then
+      echo "${FUNCNAME}(): attachment $1 not found."
     else
-      $* 2>&1 | tee -a ${LOGFILE}
-      retval=${PIPESTATUS[0]}
+      attachlist="${attachlist} -a $1"
     fi
+    shift
+  done
 
-    return ${retval}
-  }
+  if [ ${EMAIL_FAKE_SEND} -eq 1 ]; then
+    echo "${content}" \| mail ${attachlist} -s "${subject}" "${address}"
+  else
+    echo "${content}" | mail ${attachlist} -s "${subject}" "${address}"
+  fi
 }
 
 #################################################################
