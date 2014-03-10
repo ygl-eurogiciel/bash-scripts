@@ -148,7 +148,6 @@ do
   process_and_logs wget ${URL_FILES_COMMITID[$i]} || error_occurs=1
   if [ ${error_occurs} -eq 1 ]; then
     process_and_logs echo "Error: file catch failed, abording"
-    error_occurs=1
     continue
   fi
 
@@ -165,14 +164,17 @@ do
   if [ "${commitid}" != "${new_commitid}" ]; then
     delivery_to_do=1
 
+    # reset master branch to new_commitid.
     process_and_logs git fetch --all -p || error_occurs=1
-    process_and_logs echo git reset --hard || error_occurs=1
-    process_and_logs echo git checkout ${new_commitid} || error_occurs=1
+    process_and_logs git checkout -B master ${new_commitid} || error_occurs=1
 
     process_and_logs cd ${OLDPWD}
 
+    # Stop here if error... let's try next repo.
+    [ ${error_occurs} -eq 0 ] || continue
+
     # Specific Gclient calls (surely XWalk only).
-    if [ ${error_occurs} -eq 0 ] && [ ! -z "${CALL_GCLIENT[$i]}" ]; then
+    if [ ! -z "${CALL_GCLIENT[$i]}" ]; then
       echo "### Call gclient sync"
 
       process_and_logs cd ${CALL_GCLIENT[$i]}
@@ -181,12 +183,13 @@ do
       process_and_logs git fetch --all -p || error_occurs=1
 
       # Reset any previous modified file for .gclient
-      process_and_logs git checkout -- .gclient || error_occurs=1
+      process_and_logs git checkout origin/master .gclient || error_occurs=1
 
       # Modify .gclient xwalk file to point on new SHA-1
       process_and_logs cp .gclient .gclient.orig
+
       process_and_logs echo "  $ sed \"s|origin/master|${new_commitid}|\" .gclient.orig \> .gclient"
-      sed "s|origin/master|${commitid}|" .gclient.orig > .gclient
+      sed "s|origin/master|${new_commitid}|" .gclient.orig > .gclient
 
       PATH=${PWD}/depot_tools:$PATH
 
@@ -211,13 +214,52 @@ do
       # FIXME: Hardcoded path to remove
       [ -d "${CALL_GCLIENT[$i]}/Tizen_Crosswalk-tizen.org" ] && {
         process_and_logs echo "### Snapshot with rsync" 
+
+        process_and_logs cd ${CALL_GCLIENT[$i]}/Tizen_Crosswalk-tizen.org
+        process_and_logs git checkout master || error_occurs=1
+        process_and_logs git pull origin || error_occurs=1
+        process_and_logs cd ${OLDPWD}
+
         snapshot_with_rsync "${CALL_GCLIENT[$i]}/src" "${CALL_GCLIENT[$i]}/Tizen_Crosswalk-tizen.org" || error_occurs=1
 
-        prepare_commit_after_sync ${CALL_GCLIENT[$i]}/Tizen_Crosswalk-tizen.org
+        # prepare_commit_after_sync ${CALL_GCLIENT[$i]}/Tizen_Crosswalk-tizen.org
 
-        process_and_logs echo ""
-        process_and_logs echo "git push on Tizen.org is ready... need a human to do it for now !"
+        # Display some informations:
+        process_and_logs cd ${CALL_GCLIENT[$i]}/Tizen_Crosswalk-tizen.org
+        process_and_logs git add -u
+        process_and_logs git add .
+
+        process_and_logs git status
+
+        VERSION_FILE=${CALL_GCLIENT[$i]}/Tizen_Crosswalk-tizen.org/src/xwalk/VERSION
+        #UPSTREAM_COMMITID=$(cd ${CALL_GCLIENT[$i]}/Tizen_Crosswalk-tizen.org/src/xwalk; git log | head -1 | cut -d ' ' -f 2 -; cd ${OLDPWD}; )
+        [ -f ${VERSION_FILE} ] && {
+          MAJOR_V=$(grep MAJOR ${VERSION_FILE} | cut -d '=' -f 2 -)
+          MINOR_V=$(grep MINOR ${VERSION_FILE} | cut -d '=' -f 2 -)
+          BUILD_V=$(grep BUILD ${VERSION_FILE} | cut -d '=' -f 2 -)
+          PATCH_V=$(grep PATCH ${VERSION_FILE} | cut -d '=' -f 2 -)
+
+          [ -f ${CALL_GCLIENT[$i]}/commit_msg_file.txt ] && rm ${CALL_GCLIENT[$i]}/commit_msg_file.txt
+
+          echo "Upstream version ${MAJOR_V}.${MINOR_V}.${BUILD_V}.${PATCH_V}" > ${CALL_GCLIENT[$i]}/commit_msg_file.txt
+          echo "" >> ${CALL_GCLIENT[$i]}/commit_msg_file.txt
+          echo "Upstream commit-id ${new_commitid}" >> ${CALL_GCLIENT[$i]}/commit_msg_file.txt
+          process_and_logs git commit -sF ${CALL_GCLIENT[$i]}/commit_msg_file.txt
+
+          rm ${CALL_GCLIENT[$i]}/commit_msg_file.txt
+        }
+
+        if [ ${error_occurs} -eq 0 ]; then
+          process_and_logs echo "----- INFORMATION -----"
+          process_and_logs echo "git push on Tizen.org is ready... need a human to do it now:"
+          process_and_logs echo ""
+          process_and_logs echo "cd ${CALL_GCLIENT[$i]}/Tizen_Crosswalk-tizen.org"
+          process_and_logs echo "git push origin master:refs/for/master"
+        fi
       }
+    else
+      # Standard package for sync (tizen-extension at least).
+      process_and_logs echo "TODO. Waiting for bot to have access rights to push on Tizen.org"
     fi
 
     [ ${error_occurs} -eq 0 ] && process_and_logs echo "### Sync done."
@@ -229,19 +271,23 @@ done
 
 logs_addfooter
 
+gzip ${LOGFILE}
+
 # Send mail if required to all maintainers
 for (( i=0 ; $i < ${#MAINTAINERS_EMAILS[@]} ; i++ ))
 do
   if [ ${error_occurs} -eq 1 ]; then
     echo "Sending error status by mail to ${MAINTAINERS_EMAILS[$i]}"
-    email_send_file "XWalk Release bot *error*" "$0: Error detected while running the bot. Cf. log attached" ${MAINTAINERS_EMAILS[$i]} ${LOGFILE}
+    email_send_file "XWalk Release bot *error*" "$0: Error detected while running the bot. Cf. log attached" ${MAINTAINERS_EMAILS[$i]} ${LOGFILE}.gz
   fi
 
   if [ ${delivery_to_do} -eq 1 ]; then
     echo "Sending information status by mail to ${MAINTAINERS_EMAILS[$i]}"
-    email_send_file "XWalk Release bot *action needed*" "$0: Some commit-id have been updated on upstream servers. Cf. log attached" ${MAINTAINERS_EMAILS[$i]} ${LOGFILE}
+    email_send_file "XWalk Release bot *action needed*" "$0: New releases ready to push. Cf. log attached" ${MAINTAINERS_EMAILS[$i]} ${LOGFILE}.gz
   fi
 done
+
+gunzip ${LOGFILE}
 
 exit 0
 #################################################################
