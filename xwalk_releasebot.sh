@@ -212,7 +212,7 @@ do
       process_and_logs cd ${OLDPWD}
 
       # FIXME: Hardcoded path to remove
-      [ -d "${CALL_GCLIENT[$i]}/Tizen_Crosswalk-tizen.org" ] && {
+      [ ${error_occurs} -eq 0 ] && [ -d "${CALL_GCLIENT[$i]}/Tizen_Crosswalk-tizen.org" ] && {
         process_and_logs echo "### Snapshot with rsync" 
 
         process_and_logs cd ${CALL_GCLIENT[$i]}/Tizen_Crosswalk-tizen.org
@@ -260,6 +260,7 @@ do
     else
       # Standard package for sync (tizen-extension at least).
       process_and_logs echo "TODO. Waiting for bot to have access rights to push on Tizen.org"
+      process_and_logs echo "#git push origin master:refs/for/master    # this will fail due to maintainers access right pending request"
     fi
 
     [ ${error_occurs} -eq 0 ] && process_and_logs echo "### Sync done."
